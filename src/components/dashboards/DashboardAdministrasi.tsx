@@ -14,8 +14,10 @@ import { DollarSign, Users, CreditCard } from "lucide-react";
 export default function DashboardAdministrasi() {
   const [payments, setPayments] = useState<any[]>([]);
   const [totalRevenue, setTotalRevenue] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
     payment_method: "cash",
@@ -26,42 +28,73 @@ export default function DashboardAdministrasi() {
   }, []);
 
   const fetchPayments = async () => {
-    const { data } = await supabase
-      .from("payments")
-      .select("*, patients(*, profiles(full_name))")
-      .order("created_at", { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from("payments")
+        .select("*, patients(*, profiles(full_name))")
+        .order("created_at", { ascending: false });
 
-    if (data) {
-      setPayments(data);
-      const total = data
-        .filter((p) => p.status === "completed")
-        .reduce((sum, p) => sum + parseFloat(String(p.amount || 0)), 0);
-      setTotalRevenue(total);
+      if (error) throw error;
+
+      if (data) {
+        setPayments(data);
+        const total = data
+          .filter((p) => p.status === "completed")
+          .reduce((sum, p) => sum + parseFloat(String(p.amount || 0)), 0);
+        setTotalRevenue(total);
+        
+        const pending = data.filter((p) => p.status === "pending").length;
+        setPendingCount(pending);
+      }
+    } catch (error) {
+      console.error("Error fetching payments:", error);
+      toast.error("Gagal memuat data pembayaran");
     }
   };
 
   const handleProcessPayment = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const { error } = await supabase
-      .from("payments")
-      .update({
-        amount: parseFloat(paymentForm.amount),
-        payment_method: paymentForm.payment_method,
-        status: "completed",
-        paid_at: new Date().toISOString(),
-      })
-      .eq("id", selectedPayment.id);
+    if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+      toast.error("Jumlah pembayaran harus lebih dari Rp 0");
+      return;
+    }
 
-    if (error) {
-      toast.error("Gagal memproses pembayaran");
-    } else {
+    setIsSubmitting(true);
+
+    try {
+      const { error } = await supabase
+        .from("payments")
+        .update({
+          amount: parseFloat(paymentForm.amount),
+          payment_method: paymentForm.payment_method,
+          status: "completed",
+          paid_at: new Date().toISOString(),
+        })
+        .eq("id", selectedPayment.id);
+
+      if (error) throw error;
+
       toast.success("Pembayaran berhasil diproses!");
       setIsDialogOpen(false);
       setSelectedPayment(null);
       setPaymentForm({ amount: "", payment_method: "cash" });
       fetchPayments();
+    } catch (error) {
+      console.error("Error processing payment:", error);
+      toast.error("Gagal memproses pembayaran");
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const handleOpenPaymentDialog = (payment: any) => {
+    setSelectedPayment(payment);
+    setPaymentForm({
+      amount: payment.amount > 0 ? String(payment.amount) : "",
+      payment_method: payment.payment_method || "cash",
+    });
+    setIsDialogOpen(true);
   };
 
   const getStatusBadge = (status: string) => {
@@ -100,9 +133,10 @@ export default function DashboardAdministrasi() {
               <CreditCard className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
-                {payments.filter((p) => p.status === "pending").length}
-              </div>
+              <div className="text-2xl font-bold">{pendingCount}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Menunggu proses pembayaran
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -114,33 +148,51 @@ export default function DashboardAdministrasi() {
           </CardHeader>
           <CardContent>
             {payments.length === 0 ? (
-              <p className="text-muted-foreground text-center py-8">Tidak ada data pembayaran</p>
+              <div className="text-center py-12">
+                <CreditCard className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground mb-2">Tidak ada data pembayaran</p>
+                <p className="text-sm text-muted-foreground">
+                  Pembayaran akan muncul setelah dokter menyelesaikan pemeriksaan pasien
+                </p>
+              </div>
             ) : (
               <div className="space-y-3">
                 {payments.map((payment) => (
                   <div
                     key={payment.id}
-                    className="flex items-center justify-between p-4 border rounded-lg"
+                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                   >
-                    <div>
-                      <p className="font-semibold">{payment.patients?.profiles?.full_name}</p>
+                    <div className="flex-1">
+                      <p className="font-semibold">{payment.patients?.profiles?.full_name || "Nama tidak tersedia"}</p>
                       <p className="text-sm text-muted-foreground">
-                        {payment.amount
-                          ? `Rp ${parseFloat(payment.amount).toLocaleString("id-ID")}`
-                          : "Belum ditentukan"}
+                        {payment.amount && parseFloat(String(payment.amount)) > 0
+                          ? `Rp ${parseFloat(String(payment.amount)).toLocaleString("id-ID")}`
+                          : "Jumlah belum ditentukan"}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(payment.created_at).toLocaleDateString("id-ID")}
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(payment.created_at).toLocaleDateString("id-ID", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })}
+                        </p>
+                        {payment.payment_method && payment.status === "completed" && (
+                          <>
+                            <span className="text-xs text-muted-foreground">•</span>
+                            <p className="text-xs text-muted-foreground capitalize">
+                              {payment.payment_method}
+                            </p>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       {getStatusBadge(payment.status)}
                       {payment.status === "pending" && (
                         <Button
-                          onClick={() => {
-                            setSelectedPayment(payment);
-                            setIsDialogOpen(true);
-                          }}
+                          onClick={() => handleOpenPaymentDialog(payment)}
+                          size="sm"
                         >
                           Proses Bayar
                         </Button>
@@ -163,41 +215,56 @@ export default function DashboardAdministrasi() {
             </DialogHeader>
             <form onSubmit={handleProcessPayment} className="space-y-4">
               <div className="space-y-2">
-                <Label>Jumlah Pembayaran (Rp) *</Label>
+                <Label htmlFor="amount">Jumlah Pembayaran (Rp) *</Label>
                 <Input
+                  id="amount"
                   type="number"
+                  min="1"
+                  step="1000"
                   value={paymentForm.amount}
                   onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
-                  placeholder="0"
+                  placeholder="Masukkan jumlah pembayaran"
                   required
+                  disabled={isSubmitting}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Metode Pembayaran *</Label>
+                <Label htmlFor="payment-method">Metode Pembayaran *</Label>
                 <Select
                   value={paymentForm.payment_method}
                   onValueChange={(value) =>
                     setPaymentForm({ ...paymentForm, payment_method: value })
                   }
+                  disabled={isSubmitting}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
+                  <SelectTrigger id="payment-method">
+                    <SelectValue placeholder="Pilih metode pembayaran" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cash">Tunai</SelectItem>
-                    <SelectItem value="debit">Debit</SelectItem>
-                    <SelectItem value="credit">Kredit</SelectItem>
-                    <SelectItem value="transfer">Transfer</SelectItem>
+                    <SelectItem value="debit">Kartu Debit</SelectItem>
+                    <SelectItem value="credit">Kartu Kredit</SelectItem>
+                    <SelectItem value="transfer">Transfer Bank</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+              <div className="flex justify-end gap-2 mt-6">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    setPaymentForm({ amount: "", payment_method: "cash" });
+                  }}
+                  disabled={isSubmitting}
+                >
                   Batal
                 </Button>
-                <Button type="submit">Simpan</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Memproses..." : "Simpan Pembayaran"}
+                </Button>
               </div>
             </form>
           </DialogContent>
