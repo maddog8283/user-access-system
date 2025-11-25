@@ -9,10 +9,16 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { DollarSign, Users, CreditCard } from "lucide-react";
+import { DollarSign, Users, CreditCard, Search, Filter, X } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format } from "date-fns";
+import { id as localeId } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
 export default function DashboardAdministrasi() {
   const [payments, setPayments] = useState<any[]>([]);
+  const [filteredPayments, setFilteredPayments] = useState<any[]>([]);
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
@@ -22,10 +28,20 @@ export default function DashboardAdministrasi() {
     amount: "",
     payment_method: "cash",
   });
+  
+  // Filter states
+  const [searchName, setSearchName] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
 
   useEffect(() => {
     fetchPayments();
   }, []);
+
+  useEffect(() => {
+    applyFilters();
+  }, [payments, searchName, filterStatus, startDate, endDate]);
 
   const fetchPayments = async () => {
     try {
@@ -97,6 +113,49 @@ export default function DashboardAdministrasi() {
     setIsDialogOpen(true);
   };
 
+  const applyFilters = () => {
+    let filtered = [...payments];
+
+    // Filter by patient name
+    if (searchName.trim()) {
+      filtered = filtered.filter((payment) =>
+        payment.patients?.profiles?.full_name
+          ?.toLowerCase()
+          .includes(searchName.toLowerCase())
+      );
+    }
+
+    // Filter by status
+    if (filterStatus !== "all") {
+      filtered = filtered.filter((payment) => payment.status === filterStatus);
+    }
+
+    // Filter by date range
+    if (startDate) {
+      filtered = filtered.filter(
+        (payment) => new Date(payment.created_at) >= startDate
+      );
+    }
+    if (endDate) {
+      const endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(
+        (payment) => new Date(payment.created_at) <= endOfDay
+      );
+    }
+
+    setFilteredPayments(filtered);
+  };
+
+  const clearFilters = () => {
+    setSearchName("");
+    setFilterStatus("all");
+    setStartDate(undefined);
+    setEndDate(undefined);
+  };
+
+  const hasActiveFilters = searchName || filterStatus !== "all" || startDate || endDate;
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "outline"> = {
       pending: "default",
@@ -147,6 +206,132 @@ export default function DashboardAdministrasi() {
             <CardDescription>Kelola pembayaran pasien</CardDescription>
           </CardHeader>
           <CardContent>
+            {/* Filter Section */}
+            <div className="space-y-4 mb-6">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Filter Pembayaran</h3>
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFilters}
+                    className="h-7 text-xs"
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Hapus Filter
+                  </Button>
+                )}
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {/* Search by name */}
+                <div className="space-y-2">
+                  <Label htmlFor="search-name" className="text-xs">
+                    Cari Nama Pasien
+                  </Label>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="search-name"
+                      placeholder="Nama pasien..."
+                      value={searchName}
+                      onChange={(e) => setSearchName(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                </div>
+
+                {/* Filter by status */}
+                <div className="space-y-2">
+                  <Label htmlFor="filter-status" className="text-xs">
+                    Status Pembayaran
+                  </Label>
+                  <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <SelectTrigger id="filter-status">
+                      <SelectValue placeholder="Semua Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Semua Status</SelectItem>
+                      <SelectItem value="pending">Belum Lunas</SelectItem>
+                      <SelectItem value="completed">Lunas</SelectItem>
+                      <SelectItem value="cancelled">Dibatalkan</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Start date */}
+                <div className="space-y-2">
+                  <Label className="text-xs">Tanggal Mulai</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !startDate && "text-muted-foreground"
+                        )}
+                      >
+                        {startDate ? (
+                          format(startDate, "dd MMM yyyy", { locale: localeId })
+                        ) : (
+                          <span>Pilih tanggal</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={startDate}
+                        onSelect={setStartDate}
+                        initialFocus
+                        className="pointer-events-auto"
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                {/* End date */}
+                <div className="space-y-2">
+                  <Label className="text-xs">Tanggal Akhir</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "w-full justify-start text-left font-normal",
+                          !endDate && "text-muted-foreground"
+                        )}
+                      >
+                        {endDate ? (
+                          format(endDate, "dd MMM yyyy", { locale: localeId })
+                        ) : (
+                          <span>Pilih tanggal</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={endDate}
+                        onSelect={setEndDate}
+                        initialFocus
+                        disabled={(date) => startDate ? date < startDate : false}
+                        className="pointer-events-auto"
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+
+              {hasActiveFilters && (
+                <p className="text-xs text-muted-foreground">
+                  Menampilkan {filteredPayments.length} dari {payments.length} pembayaran
+                </p>
+              )}
+            </div>
+
+            {/* Payment List */}
             {payments.length === 0 ? (
               <div className="text-center py-12">
                 <CreditCard className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -155,9 +340,17 @@ export default function DashboardAdministrasi() {
                   Pembayaran akan muncul setelah dokter menyelesaikan pemeriksaan pasien
                 </p>
               </div>
+            ) : filteredPayments.length === 0 ? (
+              <div className="text-center py-12">
+                <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground mb-2">Tidak ada pembayaran yang sesuai filter</p>
+                <Button variant="outline" size="sm" onClick={clearFilters}>
+                  Hapus Filter
+                </Button>
+              </div>
             ) : (
               <div className="space-y-3">
-                {payments.map((payment) => (
+                {filteredPayments.map((payment) => (
                   <div
                     key={payment.id}
                     className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
